@@ -48,6 +48,8 @@ df$hearing_right <- factor(df$hearing_right)
 
 str(df)
 
+##################################################
+
 # Splitting Dataset for Training, Validation and Test
 set.seed(1)
 
@@ -74,6 +76,8 @@ test_data <- df[indices[(train_size + val_size + 1):nrow(df)], ]
 dim(train_data)
 dim(val_data)
 dim(test_data)
+
+
 
 # Training Dataset
 library(ggplot2)
@@ -149,70 +153,18 @@ library(ResourceSelection)
 # Hosmer-Lemeshow Test
 hoslem.test(train_data$smoking, fitted(model))
 
+str(train_data)
 
+# Apply the logistic regression model to the validation dataset to obtain predictions
+validation_pred <- predict(model, newdata = val_data, type = "response")
 
-#################################
+# Evaluate the performance of the model on the validation dataset
+# You can use metrics such as accuracy, AUC, precision, recall, etc.
+# For example, if you have true labels for the validation dataset, you can compute accuracy:
+val_labels <- val_data$smoking  # Assuming 'smoking' is the outcome variable
+accuracy <- mean(ifelse(val_labels == 1, validation_pred >= 0.5, validation_pred < 0.5))
 
-# Let's Run PCA for dimensionality reduction, as the results from logistic doesn't seem to be clustering the data properly.
-
-# Load required library
-library(stats)
-
-# Identify categorical variables in the dataframe
-categorical_cols <- sapply(train_data, is.factor)
-
-# Convert categorical variables to dummy variables
-dummy_vars <- model.matrix(~ . - 1, data = train_data[, categorical_cols])
-
-# Combine dummy variables with numeric variables
-numeric_train_data <- cbind(dummy_vars, train_data[, !categorical_cols])
-
-# Perform PCA
-pca_result <- prcomp(numeric_train_data[, -which(names(numeric_train_data) == "smoking")], scale. = TRUE)
-
-# Summary of PCA
-summary(pca_result)
-
-# Proportion of variance explained by each principal component
-prop_var <- pca_result$sdev^2 / sum(pca_result$sdev^2)
-prop_var
-
-
-#Let's Build model using selected Principal Components 
-
-# Choose principal components explaining at least 4% variation
-selected_pcs <- which(prop_var >= 0.07)
-selected_pcs
-
-# Modeling 
-
-# Extract the selected principal components from the PCA result
-selected_pc_data <- pca_result$x[, selected_pcs]
-
-# Combine the selected principal components with the response variable
-pc_with_response <- cbind(selected_pc_data, smoking = numeric_train_data$smoking)
-pc_with_response_df <- as.data.frame(pc_with_response)
-
-
-# Fit logistic regression model with selected principal components
-logit_model <- glm(smoking ~ ., data = pc_with_response_df, family = binomial)
-
-# Summary of the logistic regression model
-summary(logit_model)
-
-# Confusion Matrix
-predicted <- ifelse(predict(logit_model, newdata = pc_with_response_df, type = "response") > 0.5, 1, 0)
-confusion_matrix <- table(predicted, pc_with_response_df$smoking)
-print(confusion_matrix)
-
-# ROC Curve and AUC
-library(pROC)
-roc_curve <- roc(pc_with_response_df$smoking, predict(logit_model, newdata = pc_with_response_df, type = "response"))
-plot(roc_curve, main = "ROC Curve")
-auc(roc_curve)
-
-# Hosmer-Lemeshow Test
-hoslem.test(pc_with_response_df$smoking, fitted(logit_model))
+accuracy
 
 
 
@@ -223,56 +175,6 @@ hoslem.test(pc_with_response_df$smoking, fitted(logit_model))
 
 
 
-
-
-#__________________________________________________________________
-
-#Not Used
-
-# Let's check non-linearity in data - 
-
-# Residual Analysis
-residuals <- residuals(logit_model)
-plot(residuals ~ predicted, main = "Residuals vs Fitted", xlab = "Fitted Values", ylab = "Residuals")
-
-# Fit logistic regression model with interaction terms
-logit_model_interaction <- glm(smoking ~ selected_pc_data[,1] * selected_pc_data[,2], 
-                                data = pc_with_response_df, family = binomial)
-summary(logit_model_interaction)
-
-
-# Partial Dependence Plots (Example for one predictor)
-library(pdp)
-for i in range[1:]
-partial_plot <- partial(logit_model, pred.var = "selected_pc_data[,1]", plot = TRUE)
-
-
-#___________________________________________________________________________________________________________________________________
-
-
-#___________________________________________________________________________________________________________________________________
-<!-- # Residuals -->
-<!-- residuals <- residuals(logit_model) -->
-<!-- #residuals -->
-
-<!-- # Deviance -->
-<!-- deviance <- deviance(logit_model) -->
-<!-- #deviance -->
-
-<!-- # Confusion Matrix -->
-<!-- predicted <- ifelse(predict(logit_model, newdata = pc_with_response_df, type = "response") > 0.5, 1, 0) -->
-<!-- confusion_matrix <- table(predicted, pc_with_response_df$smoking) -->
-<!-- print(confusion_matrix) -->
-
-
-<!-- # ROC Curve and AUC -->
-<!-- library(pROC) -->
-<!-- roc_curve <- roc(pc_with_response_df$smoking, predict(model, newdata = pc_with_response_df, type = "response")) -->
-<!-- plot(roc_curve, main = "ROC Curve") -->
-<!-- auc(roc_curve) -->
-
-<!-- # Hosmer-Lemeshow Test -->
-<!-- hoslem.test(train_data$smoking, fitted(model)) -->
 
 
 

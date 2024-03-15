@@ -42,10 +42,16 @@ df$BMI <- df$weight_kg / (df$height_cm/100)
 
 str(df)
 
+df$dental_caries <- factor(df$dental_caries)
+df$hearing_left <- factor(df$hearing_left)
+df$hearing_right <- factor(df$hearing_right)
+
+str(df)
+
 # Splitting Dataset for Training, Validation and Test
 set.seed(1)
-#To split the dataset randomly into the three categories, let's generate random indices to split the dataset
 
+#To split the dataset randomly into the three categories, let's generate random indices to split the dataset
 indices <- sample(1:nrow(df), size=nrow(df), replace=FALSE) #Random Sampling the whole dataset without repetition
 
 # Define proportions for splitting
@@ -73,25 +79,44 @@ dim(test_data)
 library(ggplot2)
 
 # Generate box plots for each variable
-par(mfrow = c(5, 5))  # Set up a multi-panel plot
+par(mfrow = c(6, 6))  # Set up a multi-panel plot
 for (i in 1:26) {
   boxplot(train_data[, i], main = colnames(df)[i], col = "skyblue", border = "black", horizontal = TRUE)
 }
 
+summary(train_data)
+str(train_data)
 
-df$dental_caries <- factor(df$dental_caries)
+# hist(train_data$height_cm, main="Histogram of Height values", xlab="Height values")
+
+#Histogram for Each Column in dataset
+# Create a layout for the plots
+par(mfrow = c(5, 6))
+
+# Iterate over each column in the dataframe
+for (col in names(train_data)) {
+  if (is.numeric(train_data[[col]])) {
+    # Plot histogram for numeric columns
+    hist(train_data[[col]], main = paste("Histogram of", col),
+         xlab = col, ylab = "Frequency")
+  } else {
+    # Plot bar plot for factor columns
+    barplot(table(train_data[[col]]), main = paste("Bar Plot of", col),
+            xlab = col, ylab = "Frequency")
+  }
+}
 
 # Logistic Regression
 
-install.packages("glmnet")
+#install.packages("glmnet")
 
 library(glmnet)
 
 #Pair Plots of Training Data
 
-pairs(train_data)
+#pairs(train_data)
 # Fit logistic regression model
-model <- glm(smoking ~ ., data = train_data, family = binomial)
+model <- glm(smoking ~ . -height_cm -weight_kg -waist_cm -AST -ALT, data = train_data, family = binomial)
 
 # Summary of the model
 summary(model)
@@ -118,7 +143,7 @@ plot(roc_curve, main = "ROC Curve")
 auc(roc_curve)
 
 #Install Resource-Selection Package
-install.packages("ResourceSelection")
+#install.packages("ResourceSelection")
 library(ResourceSelection)
 
 # Hosmer-Lemeshow Test
@@ -133,8 +158,17 @@ hoslem.test(train_data$smoking, fitted(model))
 # Load required library
 library(stats)
 
+# Identify categorical variables in the dataframe
+categorical_cols <- sapply(train_data, is.factor)
+
+# Convert categorical variables to dummy variables
+dummy_vars <- model.matrix(~ . - 1, data = train_data[, categorical_cols])
+
+# Combine dummy variables with numeric variables
+numeric_train_data <- cbind(dummy_vars, train_data[, !categorical_cols])
+
 # Perform PCA
-pca_result <- prcomp(train_data[, -which(names(train_data) == "smoking")], scale. = TRUE)
+pca_result <- prcomp(numeric_train_data[, -which(names(numeric_train_data) == "smoking")], scale. = TRUE)
 
 # Summary of PCA
 summary(pca_result)
@@ -156,7 +190,7 @@ selected_pcs
 selected_pc_data <- pca_result$x[, selected_pcs]
 
 # Combine the selected principal components with the response variable
-pc_with_response <- cbind(selected_pc_data, smoking = train_data$smoking)
+pc_with_response <- cbind(selected_pc_data, smoking = numeric_train_data$smoking)
 pc_with_response_df <- as.data.frame(pc_with_response)
 
 
@@ -181,6 +215,20 @@ auc(roc_curve)
 hoslem.test(pc_with_response_df$smoking, fitted(logit_model))
 
 
+
+
+
+
+
+
+
+
+
+
+#__________________________________________________________________
+
+#Not Used
+
 # Let's check non-linearity in data - 
 
 # Residual Analysis
@@ -199,6 +247,10 @@ for i in range[1:]
 partial_plot <- partial(logit_model, pred.var = "selected_pc_data[,1]", plot = TRUE)
 
 
+#___________________________________________________________________________________________________________________________________
+
+
+#___________________________________________________________________________________________________________________________________
 <!-- # Residuals -->
 <!-- residuals <- residuals(logit_model) -->
 <!-- #residuals -->

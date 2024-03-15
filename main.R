@@ -1,18 +1,19 @@
 #Load Dataset
-attach(Smoking_Training_Data)
+#attach(Smoking_Training_Data)
+
+Smoking_Training_Data <- read.csv("C:\\Users\\Akash Mittal\\Documents\\Health Dataset\\Kaggle_Smoking\\Smoking_Training_Data.csv")
 
 #Create Dataframe
 df = Smoking_Training_Data
 
+#Print the summary, head and omit any null values
 head(df)
-
 str(df)
-
 colnames(df)
-
 df <- na.omit(df)
-str(df)
 
+# Print the summary again
+str(df)
 summary(df)
 
 #Renaming Colnames for simplicity

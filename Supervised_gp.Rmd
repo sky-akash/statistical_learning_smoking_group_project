@@ -1,0 +1,900 @@
+library(readr)
+Smoking_Training_Data <- read_csv("Health Dataset/Kaggle_Smoking/Smoking_Training_Data.csv")
+
+
+library(dplyr)
+library(caret)
+library(pROC)
+
+#Load Dataset
+attach(Smoking_Training_Data)
+
+#Create Dataframe
+df = Smoking_Training_Data
+
+head(df)
+
+str(df)
+
+colnames(df)
+
+df <- na.omit(df)
+str(df)
+
+summary(df)
+
+#Renaming Colnames for simplicity
+colnames(df)[colnames(df) == "height(cm)"] <- "height_cm"
+colnames(df)[colnames(df) == "weight(kg)"] <- "weight_kg"
+colnames(df)[colnames(df) == "waist(cm)"] <- "waist_cm"
+colnames(df)[colnames(df) == "eyesight(left)"] <- "eyesight_left"
+colnames(df)[colnames(df) == "eyesight(right)"] <- "eyesight_right"
+colnames(df)[colnames(df) == "hearing(left)"] <- "hearing_left"
+colnames(df)[colnames(df) == "hearing(right)"] <- "hearing_right"
+colnames(df)[colnames(df) == "fasting blood sugar"] <- "fasting_blood_sugar"
+colnames(df)[colnames(df) == "Urine protein"] <- "urine_protein"
+colnames(df)[colnames(df) == "serum creatinine"] <- "serum_creatinine"
+colnames(df)[colnames(df) == "dental caries"] <- "dental_caries"
+
+df <-df %>%
+  mutate(
+    hearing_left = factor(hearing_left),
+    hearing_right = factor(hearing_right),
+    dental_caries = factor(dental_caries),
+    smoking = factor(smoking)
+)
+
+#Adding Extra Columns to dataset for Derived Variables 
+# Var1 is WHtR (Waist to Height Ratio) = waist (cm)/ height (cm)
+# Var2 is as_lt i.e. AST / ALT ratio
+# Var3 is BMI, Body Mass Index = Weight (kg)/ height^2 (m)
+
+
+df$WHtR <- df$waist_cm/df$height_cm
+df$as_lt <- df$AST/df$ALT
+df$BMI <- df$weight_kg / (df$height_cm/100)
+
+
+#Select Preferred Variables (based on prior knowledge
+
+df <- df %>%
+  select(-waist_cm, -height_cm, -weight_kg, -eyesight_left, -eyesight_right)
+
+str(df)
+
+#################################################
+#Let's check the correlations
+# Correlation will run only on Numeric Datatypes
+cor(df[, sapply(df, is.numeric)])
+
+#################################################
+#Let's fit the Logistic Regression on Whole Dataset and check the Probabilities.
+
+glm.fits1 <- glm(
+    smoking ~ .,
+    data = df, family = binomial
+  )
+summary(glm.fits1)
+
+
+coef(glm.fits1) #Extract the coefficients from the Summary
+summary(glm.fits1)$coef #Extract all coefficients
+summary(glm.fits1)$coef[, 4] #Extract p-values from the Summary of Fit
+
+#Applying the fitted Model
+glm.probs <- predict(glm.fits1, type = "response")
+
+contrasts(df$smoking)
+
+glm.pred <- rep("0", 38984)
+glm.pred[glm.probs > .5] = "1"
+###
+table(glm.pred, smoking)
+
+conf_matrix <- confusionMatrix(as.factor(glm.pred), as.factor(df$smoking))
+
+f1_score <- 2 * (conf_matrix$byClass['Precision'] * conf_matrix$byClass['Sensitivity']) / (conf_matrix$byClass['Precision'] + conf_matrix$byClass['Sensitivity'])
+
+# ROC curve and AUC
+roc_curve <- roc(df$smoking, glm.probs) # ROC curve
+plot(roc_curve, main = "ROC Curve", col = "red", lwd = 2) # Plot ROC curve
+auc <- auc(roc_curve) # AUC (Area Under the Curve)
+legend("bottomright", legend = paste("AUC =", round(auc, 3)), col = "blue", lwd = 2) # Add AUC to plot
+
+
+########################################################################################################
+
+
+# Part 2 of the Game
+
+## Separating the dataset into Training, Validation and Test datasets to find a better fit, if we can.
+
+
+### Will perform two techniques for now - 
+#### 1. Direct Logistic Regression incorporating Interdependence and Other Factors 
+#### 2. PCA for component selection and then Logistic Regression
+
+#######################################################################################################
+# Splitting Dataset for Training, Validation and Test
+
+set.seed(1)
+
+#To split the dataset randomly into the three categories, let's generate random indices to split the dataset
+indices <- sample(1:nrow(df), size=nrow(df), replace=FALSE) #Random Sampling the whole dataset without repetition
+
+# Define proportions for splitting
+train_prop <- 0.7  # 70% for training
+val_prop <- 0.15   # 15% for validation
+test_prop <- 0.15  # 15% for testing
+
+# Calculate the number of samples for each set
+train_size <- round(train_prop * nrow(df))
+val_size <- round(val_prop * nrow(df))
+test_size <- nrow(df) - train_size - val_size
+
+
+# Split the data
+train_data <- df[indices[1:train_size], ]
+val_data <- df[indices[(train_size + 1):(train_size + val_size)], ]
+test_data <- df[indices[(train_size + val_size + 1):nrow(df)], ]
+
+# Let's print the dimensions of the split datasets
+dim(train_data)
+dim(val_data)
+dim(test_data)
+
+
+# Print the Structure of the dataframe
+str(df)
+# Print the Structure of the training data
+str(train_data)
+# Summary of Training Data
+summary(train_data)
+
+### Note the summary shows there are comparatively More Non-Smokers than Smokers ~ 17k vs 10k
+### But for now, we are proceeding with the data as it is without resampling the dataset.
+
+# Let's create Histograms to check the spread of data.
+library(ggplot2)
+
+# Create a layout for the plots
+par(mfrow = c(5, 6))
+
+# Iterate over each column in the dataframe
+for (col in names(train_data)) {
+  if (is.numeric(train_data[[col]])) {
+    # Plot histogram for numeric columns
+    hist(train_data[[col]], main = paste("Histogram of", col),
+         xlab = col, ylab = "Frequency")
+  } else {
+    # Plot bar plot for factor columns
+    barplot(table(train_data[[col]]), main = paste("Bar Plot of", col),
+            xlab = col, ylab = "Frequency")
+  }
+}
+
+
+## Let's use logarithm to transform non-normal predictors, and check the plots again.
+
+str(train_data)
+
+train_data$age <- log(train_data$age)
+train_data$fasting_blood_sugar <- log(train_data$fasting_blood_sugar)
+train_data$triglyceride <- log(train_data$triglyceride)
+train_data$HDL <- log(train_data$HDL)
+train_data$LDL <- log(train_data$LDL)
+train_data$urine_protein <- log(train_data$urine_protein)
+train_data$serum_creatinine <- log(train_data$serum_creatinine)
+train_data$AST <- log(train_data$AST)
+train_data$ALT <- log(train_data$ALT)
+train_data$Gtp <- log(train_data$Gtp)
+train_data$as_lt <- log(train_data$as_lt)
+
+
+# Create a layout for the plots
+par(mfrow = c(5, 6))
+
+# Iterate over each column in the dataframe
+for (col in names(train_data)) {
+  if (is.numeric(train_data[[col]])) {
+    # Plot histogram for numeric columns
+    hist(train_data[[col]], main = paste("Histogram of", col),
+         xlab = col, ylab = "Frequency")
+  } else {
+    # Plot bar plot for factor columns
+    barplot(table(train_data[[col]]), main = paste("Bar Plot of", col),
+            xlab = col, ylab = "Frequency")
+  }
+}
+
+
+## Fit the Model on all parameters
+glm.fits2 <- glm(
+    smoking ~ .,
+    data = train_data, family = binomial
+  )
+summary(glm.fits2)
+
+#Applying the fitted Model
+glm.probs2 <- predict(glm.fits2, type = "response")
+
+contrasts(train_data$smoking)
+
+glm.pred2 <- rep("0", 27289)
+glm.pred2[glm.probs2 > .5] = "1"
+###
+table(glm.pred2, train_data$smoking)
+
+conf_matrix2 <- confusionMatrix(as.factor(glm.pred2), as.factor(train_data$smoking))
+
+f1_score2 <- 2 * (conf_matrix2$byClass['Precision'] * conf_matrix2$byClass['Sensitivity']) / (conf_matrix2$byClass['Precision'] + conf_matrix2$byClass['Sensitivity'])
+
+# ROC curve and AUC
+roc_curve2 <- roc(train_data$smoking, glm.probs2) # ROC curve
+plot(roc_curve2, main = "ROC Curve 2", col = "blue", lwd = 2) # Plot ROC curve
+auc <- auc(roc_curve2) # AUC (Area Under the Curve)
+legend("bottomright", legend = paste("AUC =", round(auc, 3)), col = "blue", lwd = 2) # Add AUC to plot
+
+
+
+
+################################
+# Let's check the correlations between the Predictors
+# Correlation will run only on Numeric Datatypes
+cor(train_data[, sapply(train_data, is.numeric)])
+
+
+## Now Let's Third Model on selective Parameters and also Include the Interaction Effects, and drop un-necessary Variables
+
+# Create train_data_filtered by excluding AST, ALT, and BMI
+train_data_filtered <- subset(train_data, select = -c(AST, ALT, BMI))
+
+str(train_data_filtered)
+
+# Create box plot for systolic pressure for smokers and non-smokers
+<!-- ggplot(train_data_filtered, aes(x = smoking, y = systolic, fill = smoking)) + -->
+<!--   geom_boxplot() + -->
+<!--   labs(x = "Smoking Status", y = "Systolic Pressure") + -->
+<!--   scale_fill_manual(values = c("#FF9999", "#66CCFF"), name = "Smoking Status", -->
+<!--                     labels = c("Non-Smoker", "Smoker")) + -->
+<!--   theme_minimal() -->
+
+
+# Let's Calculate VIF for Cholesterol and LDL, so we can use only 1 in the model based on VIF, as the two are highly correlated
+
+library(car)
+
+# Fitting linear model for Cholesterol
+lm_cholesterol <- lm(Cholesterol ~ ., data = train_data_filtered)
+
+# Fitting linear model for LDL
+lm_ldl <- lm(LDL ~ ., data = train_data_filtered)
+
+# Calculating VIF for Cholesterol
+vif_cholesterol <- vif(lm_cholesterol)
+
+# Calculating VIF for LDL
+vif_ldl <- vif(lm_ldl)
+
+# Print VIF values
+print(vif_cholesterol)
+print(vif_ldl)
+
+
+# Fit a linear model for Triglyceride
+lm_triglyceride <- lm(triglyceride ~ . , data = train_data_filtered)
+
+# Fit a linear model for HDL
+lm_hdl <- lm(HDL ~ . , data = train_data_filtered)
+
+# Calculate VIF for Triglyceride
+vif_triglyceride <- vif(lm_triglyceride)
+
+# Calculate VIF for HDL
+vif_hdl <- vif(lm_hdl)
+
+# Print VIF values
+print(vif_triglyceride)
+print(vif_hdl)
+
+
+# Fit a linear model for systolic pressure
+lm_systolic <- lm(systolic ~ . , data = train_data_filtered)
+
+# Fit a linear model for relaxation
+lm_relaxation <- lm(relaxation ~ . , data = train_data_filtered)
+
+# Calculate VIF for systolic pressure
+vif_systolic <- car::vif(lm_systolic)
+
+# Calculate VIF for relaxation
+vif_relaxation <- car::vif(lm_relaxation)
+
+# Print VIF values
+print(vif_systolic)
+print(vif_relaxation)
+
+
+# Fit a linear model for Hemoglobin
+lm_hemoglobin <- lm(hemoglobin ~ . , data = train_data_filtered)
+
+# Fit a linear model for Gtp
+lm_gtp <- lm(Gtp ~ . , data = train_data_filtered)
+
+# Calculate VIF for Hemoglobin
+vif_hemoglobin <- car::vif(lm_hemoglobin)
+
+# Calculate VIF for Gtp
+vif_gtp <- car::vif(lm_gtp)
+
+# Print VIF values
+print(vif_hemoglobin)
+print(vif_gtp)
+
+
+train_data_filtered$MAP <- (train_data_filtered$systolic + 2 * train_data_filtered$relaxation) / 3
+
+train_data_filtered2 <- subset(train_data_filtered, select = -c(systolic, relaxation))
+cor((train_data_filtered2[, sapply(train_data_filtered2, is.numeric)]))
+
+
+#Let's fit the regression model
+
+summary(train_data_filtered2)
+
+glm.fits3 <- glm(
+    smoking ~ . - Cholesterol -hearing_left -hearing_right,
+    data = train_data_filtered2, family = binomial
+)
+summary(glm.fits3)
+
+#Applying the fitted Model
+glm.probs3 <- predict(glm.fits3, type = "response")
+
+contrasts(train_data_filtered2$smoking)
+
+glm.pred3 <- rep("0", 27289)
+glm.pred3[glm.probs3 > .5] = "1"
+###
+table(glm.pred3, train_data_filtered2$smoking)
+
+conf_matrix3 <- confusionMatrix(as.factor(glm.pred3), as.factor(train_data_filtered$smoking))
+conf_matrix3
+
+f1_score3 <- 2 * (conf_matrix3$byClass['Precision'] * conf_matrix3$byClass['Sensitivity']) / (conf_matrix3$byClass['Precision'] + conf_matrix3$byClass['Sensitivity'])
+f1_score3
+
+# ROC curve and AUC
+roc_curve3 <- roc(train_data_filtered2$smoking, glm.probs3) # ROC curve
+plot(roc_curve3, main = "ROC Curve 3", col = "pink", lwd = 2) # Plot ROC curve
+auc <- auc(roc_curve3) # AUC (Area Under the Curve)
+legend("bottomright", legend = paste("AUC =", round(auc, 3)), col = "blue", lwd = 2) # Add AUC to plot
+
+
+
+
+# applying the Model on Validation data set for this model
+#Performing Transformations on Validation data
+
+val_data$age <- log(val_data$age)
+val_data$fasting_blood_sugar <- log(val_data$fasting_blood_sugar)
+val_data$triglyceride <- log(val_data$triglyceride)
+val_data$HDL <- log(val_data$HDL)
+val_data$LDL <- log(val_data$LDL)
+val_data$urine_protein <- log(val_data$urine_protein)
+val_data$serum_creatinine <- log(val_data$serum_creatinine)
+val_data$AST <- log(val_data$AST)
+val_data$ALT <- log(val_data$ALT)
+val_data$Gtp <- log(val_data$Gtp)
+val_data$as_lt <- log(val_data$as_lt)
+
+
+val_data$MAP <- (val_data$systolic + 2 * val_data$relaxation) / 3
+val_data_filtered <- subset(val_data, select = -c(AST, ALT, BMI, systolic, relaxation))
+
+# Applying the Fitted regression Model
+
+# Apply the fitted model to the validation dataset
+glm.probs_val1 <- predict(glm.fits3, newdata = val_data_filtered, type = "response")
+
+# Convert predicted probabilities to binary predictions using a threshold of 0.5
+glm.pred_val1 <- ifelse(glm.probs_val1 > 0.5, "1", "0")
+glm.pred_val1 <- factor(glm.pred_val1, levels = levels(val_data_filtered$smoking))
+
+# Create confusion matrix for validation dataset
+conf_matrix_val1 <- confusionMatrix(glm.pred_val1, val_data_filtered$smoking)
+conf_matrix_val1
+
+# Calculate F1-score for validation dataset
+f1_score_val1 <- 2 * (conf_matrix_val1$byClass['Precision'] * conf_matrix_val1$byClass['Sensitivity']) / 
+                (conf_matrix_val1$byClass['Precision'] + conf_matrix_val1$byClass['Sensitivity'])
+f1_score_val1
+
+# ROC curve and AUC for validation dataset
+roc_curve_val1 <- roc(val_data_filtered$smoking, glm.probs_val1)
+plot(roc_curve_val1, main = "ROC Curve for Validation Dataset 1", col = "pink", lwd = 2)
+auc_val1 <- auc(roc_curve_val1)
+legend("bottomright", legend = paste("AUC =", round(auc_val1, 3)), col = "blue", lwd = 2)
+
+
+
+
+
+
+
+
+
+
+#############################################################################################
+
+#Let's fit the regression model (With Interaction of Gtp vs as_lt)
+
+summary(train_data_filtered2)
+
+glm.fits3 <- glm(
+    smoking ~ . - Cholesterol -hearing_left -hearing_right +Gtp:as_lt,
+    data = train_data_filtered2, family = binomial
+)
+summary(glm.fits3)
+
+#Applying the fitted Model
+glm.probs3 <- predict(glm.fits3, type = "response")
+
+contrasts(train_data_filtered2$smoking)
+
+glm.pred3 <- rep("0", 27289)
+glm.pred3[glm.probs3 > .5] = "1"
+###
+table(glm.pred3, train_data_filtered2$smoking)
+
+conf_matrix3 <- confusionMatrix(as.factor(glm.pred3), as.factor(train_data_filtered$smoking))
+conf_matrix3
+
+f1_score3 <- 2 * (conf_matrix3$byClass['Precision'] * conf_matrix3$byClass['Sensitivity']) / (conf_matrix3$byClass['Precision'] + conf_matrix3$byClass['Sensitivity'])
+f1_score3
+
+# ROC curve and AUC
+roc_curve3 <- roc(train_data_filtered2$smoking, glm.probs3) # ROC curve
+plot(roc_curve3, main = "ROC Curve 3", col = "pink", lwd = 2) # Plot ROC curve
+auc <- auc(roc_curve3) # AUC (Area Under the Curve)
+legend("bottomright", legend = paste("AUC =", round(auc, 3)), col = "blue", lwd = 2) # Add AUC to plot
+
+
+
+
+# applying the Model on Validation data set for this model
+#Performing Transformations on Validation data
+
+val_data$age <- log(val_data$age)
+val_data$fasting_blood_sugar <- log(val_data$fasting_blood_sugar)
+val_data$triglyceride <- log(val_data$triglyceride)
+val_data$HDL <- log(val_data$HDL)
+val_data$LDL <- log(val_data$LDL)
+val_data$urine_protein <- log(val_data$urine_protein)
+val_data$serum_creatinine <- log(val_data$serum_creatinine)
+val_data$AST <- log(val_data$AST)
+val_data$ALT <- log(val_data$ALT)
+val_data$Gtp <- log(val_data$Gtp)
+val_data$as_lt <- log(val_data$as_lt)
+
+
+val_data$MAP <- (val_data$systolic + 2 * val_data$relaxation) / 3
+val_data_filtered <- subset(val_data, select = -c(AST, ALT, BMI, systolic, relaxation))
+
+# Applying the Fitted regression Model
+
+# Apply the fitted model to the validation dataset
+glm.probs_val1 <- predict(glm.fits3, newdata = val_data_filtered, type = "response")
+
+# Convert predicted probabilities to binary predictions using a threshold of 0.5
+glm.pred_val1 <- ifelse(glm.probs_val1 > 0.5, "1", "0")
+glm.pred_val1 <- factor(glm.pred_val1, levels = levels(val_data_filtered$smoking))
+
+# Create confusion matrix for validation dataset
+conf_matrix_val1 <- confusionMatrix(glm.pred_val1, val_data_filtered$smoking)
+conf_matrix_val1
+
+# Calculate F1-score for validation dataset
+f1_score_val1 <- 2 * (conf_matrix_val1$byClass['Precision'] * conf_matrix_val1$byClass['Sensitivity']) / 
+                (conf_matrix_val1$byClass['Precision'] + conf_matrix_val1$byClass['Sensitivity'])
+f1_score_val1
+
+# ROC curve and AUC for validation dataset
+roc_curve_val1 <- roc(val_data_filtered$smoking, glm.probs_val1)
+plot(roc_curve_val1, main = "ROC Curve for Validation Dataset 1", col = "pink", lwd = 2)
+auc_val1 <- auc(roc_curve_val1)
+legend("bottomright", legend = paste("AUC =", round(auc_val1, 3)), col = "blue", lwd = 2)
+
+
+# Performing Transformations on Test data
+test_data$age <- log(test_data$age)
+test_data$fasting_blood_sugar <- log(test_data$fasting_blood_sugar)
+test_data$triglyceride <- log(test_data$triglyceride)
+test_data$HDL <- log(test_data$HDL)
+test_data$LDL <- log(test_data$LDL)
+test_data$urine_protein <- log(test_data$urine_protein)
+test_data$serum_creatinine <- log(test_data$serum_creatinine)
+test_data$AST <- log(test_data$AST)
+test_data$ALT <- log(test_data$ALT)
+test_data$Gtp <- log(test_data$Gtp)
+test_data$as_lt <- log(test_data$as_lt)
+
+test_data$MAP <- (test_data$systolic + 2 * test_data$relaxation) / 3
+test_data_filtered <- subset(test_data, select = -c(AST, ALT, BMI, systolic, relaxation))
+
+# Applying the Fitted regression Model to the test dataset
+glm.probs_test <- predict(glm.fits3, newdata = test_data_filtered, type = "response")
+
+# Convert predicted probabilities to binary predictions using a threshold of 0.5
+glm.pred_test <- ifelse(glm.probs_test > 0.5, "1", "0")
+glm.pred_test <- factor(glm.pred_test, levels = levels(test_data_filtered$smoking))
+
+# Create confusion matrix for test dataset
+conf_matrix_test <- confusionMatrix(glm.pred_test, test_data_filtered$smoking)
+conf_matrix_test
+
+# Calculate F1-score for test dataset
+f1_score_test <- 2 * (conf_matrix_test$byClass['Precision'] * conf_matrix_test$byClass['Sensitivity']) / 
+                (conf_matrix_test$byClass['Precision'] + conf_matrix_test$byClass['Sensitivity'])
+f1_score_test
+
+# ROC curve and AUC for test dataset
+roc_curve_test <- roc(test_data_filtered$smoking, glm.probs_test)
+plot(roc_curve_test, main = "ROC Curve for Test Dataset", col = "pink", lwd = 2)
+auc_test <- auc(roc_curve_test)
+legend("bottomright", legend = paste("AUC =", round(auc_test, 3)), col = "blue", lwd = 2)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##################################################
+
+# Splitting Dataset for Training, Validation and Test
+set.seed(1)
+
+#To split the dataset randomly into the three categories, let's generate random indices to split the dataset
+indices <- sample(1:nrow(df), size=nrow(df), replace=FALSE) #Random Sampling the whole dataset without repetition
+
+# Define proportions for splitting
+train_prop <- 0.7  # 70% for training
+val_prop <- 0.15   # 15% for validation
+test_prop <- 0.15  # 15% for testing
+
+# Calculate the number of samples for each set
+train_size <- round(train_prop * nrow(df))
+val_size <- round(val_prop * nrow(df))
+test_size <- nrow(df) - train_size - val_size
+
+
+# Split the data
+train_data <- df[indices[1:train_size], ]
+val_data <- df[indices[(train_size + 1):(train_size + val_size)], ]
+test_data <- df[indices[(train_size + val_size + 1):nrow(df)], ]
+
+# Let's print the dimensions of the split datasets
+dim(train_data)
+dim(val_data)
+dim(test_data)
+
+
+
+# Training Dataset
+library(ggplot2)
+
+# Generate box plots for each variable
+par(mfrow = c(6, 6))  # Set up a multi-panel plot
+for (i in 1:26) {
+  boxplot(train_data[, i], main = colnames(df)[i], col = "skyblue", border = "black", horizontal = TRUE)
+}
+
+summary(train_data)
+str(train_data)
+
+# hist(train_data$height_cm, main="Histogram of Height values", xlab="Height values")
+
+#Histogram for Each Column in dataset
+# Create a layout for the plots
+par(mfrow = c(5, 6))
+
+# Iterate over each column in the dataframe
+for (col in names(train_data)) {
+  if (is.numeric(train_data[[col]])) {
+    # Plot histogram for numeric columns
+    hist(train_data[[col]], main = paste("Histogram of", col),
+         xlab = col, ylab = "Frequency")
+  } else {
+    # Plot bar plot for factor columns
+    barplot(table(train_data[[col]]), main = paste("Bar Plot of", col),
+            xlab = col, ylab = "Frequency")
+  }
+}
+
+# Logistic Regression
+
+#install.packages("glmnet")
+
+library(glmnet)
+
+#Pair Plots of Training Data
+
+#pairs(train_data)
+# Fit logistic regression model
+model <- glm(smoking ~ . -height_cm -weight_kg -waist_cm -AST -ALT, data = train_data, family = binomial)
+
+# Summary of the model
+summary(model)
+
+
+# Residuals
+residuals <- residuals(model)
+#residuals
+
+# Deviance
+deviance <- deviance(model)
+#deviance
+
+# Confusion Matrix
+predicted <- ifelse(predict(model, newdata = train_data, type = "response") > 0.5, 1, 0)
+confusion_matrix <- table(predicted, train_data$smoking)
+print(confusion_matrix)
+
+
+# ROC Curve and AUC
+library(pROC)
+roc_curve <- roc(train_data$smoking, predict(model, newdata = train_data, type = "response"))
+plot(roc_curve, main = "ROC Curve")
+auc(roc_curve)
+
+#Install Resource-Selection Package
+#install.packages("ResourceSelection")
+library(ResourceSelection)
+
+# Hosmer-Lemeshow Test
+hoslem.test(train_data$smoking, fitted(model))
+
+str(train_data)
+
+# Apply the logistic regression model to the validation dataset to obtain predictions
+validation_pred <- predict(model, newdata = val_data, type = "response")
+
+# Evaluate the performance of the model on the validation dataset
+# You can use metrics such as accuracy, AUC, precision, recall, etc.
+# For example, if you have true labels for the validation dataset, you can compute accuracy:
+val_labels <- val_data$smoking  # Assuming 'smoking' is the outcome variable
+accuracy <- mean(ifelse(val_labels == 1, validation_pred >= 0.5, validation_pred < 0.5))
+
+accuracy
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

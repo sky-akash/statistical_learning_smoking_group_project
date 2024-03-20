@@ -91,17 +91,16 @@ summary(df_fe)
 str(df_fe)
 
 # Split numeric data based on smoking status
-numeric_data_smoker <- numeric_data_bp[df_fe$smoking == "1", ]
-numeric_data_non_smoker <- numeric_data_bp[df_fe$smoking == "0", ]
+numeric_data_smoker <- df_fe[df_fe$smoking == "1", ]
+numeric_data_non_smoker <- df_fe[df_fe$smoking == "0", ]
 
-par(mfrow = c(4, ncol(numeric_data_bp) / 4), mar = c(4, 4, 2, 2))
-for (i in 1:ncol(numeric_data_bp)) {
+par(mfrow = c(4, ncol(df_fe) / 4), mar = c(4, 4, 2, 2))
+for (i in 1:ncol(df_fe)) {
   boxplot(numeric_data_smoker[, i], col = "skyblue", border = "blue", 
-          main = paste("Boxplot of", colnames(numeric_data_bp)[i], "for Smokers"))
+          main = paste("Boxplot of", colnames(df_fe)[i], "for Smokers"))
   boxplot(numeric_data_non_smoker[, i], col = "lightpink", border = "maroon", 
-          main = paste("Boxplot of", colnames(numeric_data_bp)[i], "for Non-Smokers"))
+          main = paste("Boxplot of", colnames(df_fe)[i], "for Non-Smokers"))
 }
-
 
 
 # Splitting Dataset for Training, Validation and Test
